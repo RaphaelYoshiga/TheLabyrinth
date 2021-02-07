@@ -135,14 +135,56 @@ public class Map
 
         _searchCache = new Dictionary<Point, bool>();
 
-
         var dfsResult = DFS(current, 0);
-
 
         _positions.Push(current);
         _visited.Add(current);
 
         return FormatResponse(dfsResult.Direction);
+    }
+
+    private int CalculateDiscoveredCells(Point current)
+    {
+        var range = new[] {
+            new Point(current.Row + 1, current.Column),
+            new Point(current.Row + 2, current.Column),
+
+            new Point(current.Row - 1, current.Column),
+            new Point(current.Row - 2, current.Column),
+
+            new Point(current.Row, current.Column + 1),
+            new Point(current.Row, current.Column + 2),
+
+            new Point(current.Row, current.Column - 1),
+            new Point(current.Row, current.Column - 2),
+
+
+
+            new Point(current.Row + 1, current.Column + 1),
+            new Point(current.Row + 1, current.Column + 2),
+            new Point(current.Row + 2, current.Column + 1),
+            new Point(current.Row + 2, current.Column + 2),
+
+
+            new Point(current.Row + 1, current.Column - 1),
+            new Point(current.Row + 1, current.Column - 2),
+            new Point(current.Row + 2, current.Column - 1),
+            new Point(current.Row + 2, current.Column - 2),
+
+
+            new Point(current.Row - 1, current.Column + 1),
+            new Point(current.Row - 1, current.Column + 2),
+            new Point(current.Row - 2, current.Column + 1),
+            new Point(current.Row - 2, current.Column + 2),
+
+
+            new Point(current.Row - 1, current.Column - 1),
+            new Point(current.Row - 1, current.Column - 2),
+            new Point(current.Row - 2, current.Column - 1),
+            new Point(current.Row - 2, current.Column - 2),
+
+        };
+        return range.Count(x => At(x.Row, x.Column) == '?');
     }
 
     private static string FormatResponse(Direction resultDirection)
@@ -166,7 +208,7 @@ public class Map
         if (charAt == 'C')
             return new ScoreResult(int.MaxValue, Direction.UP);
 
-        score++;
+        score += 1 + CalculateDiscoveredCells(current);
         if (charAt == '?')
         {
             return new ScoreResult(score, Direction.UP);
