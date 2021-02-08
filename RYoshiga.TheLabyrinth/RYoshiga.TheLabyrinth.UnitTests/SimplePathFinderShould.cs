@@ -153,10 +153,7 @@ namespace RYoshiga.TheLabyrinth.UnitTests
             var goingBackHome = new SimplePathFinder(map, new Point(12, 26), 'C');
             goingBackHome.FillDynamicProgramming(controlRoom);
 
-            goingBackHome.Do(new Point(2, 12)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 11)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 10)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 9)).ShouldBe("LEFT");
+            goingBackHome.Do(new Point(2, 12)).ShouldBe("RIGHT");
 
             sw.Stop();
             Debug.WriteLine($"Time taken {sw.ElapsedMilliseconds}");
@@ -204,10 +201,7 @@ namespace RYoshiga.TheLabyrinth.UnitTests
             var goingBackHome = new SimplePathFinder(map, new Point(1, 1), 'T');
             goingBackHome.FillDynamicProgramming(controlRoom);
 
-            goingBackHome.Do(new Point(2, 12)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 11)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 10)).ShouldBe("LEFT");
-            goingBackHome.Do(new Point(2, 9)).ShouldBe("LEFT");
+            goingBackHome.Do(new Point(1, 1)).ShouldBe("RIGHT");
 
             sw.Stop();
             Debug.WriteLine($"Time taken {sw.ElapsedMilliseconds}");

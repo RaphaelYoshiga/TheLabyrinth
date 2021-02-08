@@ -5,55 +5,6 @@ using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 
-public struct Point
-{
-    public Point(int row, int column)
-    {
-        Row = row;
-
-        Column = column;
-    }
-
-    public Point(Point current, Direction direction)
-    {
-        Column = current.Column;
-        Row = current.Row;
-
-        switch (direction)
-        {
-            case Direction.LEFT:
-                Column--;
-                break;
-            case Direction.RIGHT:
-                Column++;
-                break;
-            case Direction.DOWN:
-                Row++;
-                break;
-            case Direction.UP:
-                Row--;
-                break;
-        }
-    }
-
-    public int Column { get; }
-    public int Row { get; }
-
-    public Direction FindDirection(Point previous)
-    {
-        if (this.Row > previous.Row)
-            return Direction.UP;
-
-        if (this.Row < previous.Row)
-            return Direction.DOWN;
-
-        if (this.Column > previous.Column)
-            return Direction.LEFT;
-
-        return Direction.RIGHT;
-    }
-}
-
 /**
  * Auto-generated code below aims at helping you parse
  * the standard input according to the problem statement.
@@ -325,7 +276,50 @@ public class SimplePathFinder
     {
         _targetPoint = targetPoint;
         _dynamicProgramming[targetPoint.Row, targetPoint.Column] = 0;
-        Dfs(targetPoint, 0);
+        Bfs(targetPoint, 0);
+    }
+
+    private void Bfs(Point startingPoint, int steps)
+    {
+        var searchQueue = new Queue<PointStep>();
+        searchQueue.Enqueue(new PointStep(startingPoint, steps));
+
+        while (searchQueue.TryDequeue(out var pointStep))
+        {
+            var point = pointStep.Point;
+            if (_map.IsOutsideRange(point))
+                continue;
+
+            var existingValue = _dynamicProgramming[point.Row, point.Column];
+            if ((steps > 0 && existingValue.HasValue && steps > existingValue) ||
+                (steps > 0 && point.Equals(_targetPoint)) ||
+                existingValue.HasValue && existingValue == int.MaxValue)
+            {
+                continue;
+            }
+
+            var charAt = _map.At(point.Row, point.Column);
+            if (charAt == _target && steps > 0)
+            {
+                SetDp(point, 0);
+                continue;
+            }
+
+            if (steps > 0 && (charAt == '?' || charAt == '#' || charAt == 'C'))
+            {
+                SetDp(point, int.MaxValue);
+                continue;
+            }
+
+            steps++;
+
+            SetDp(point, steps);
+
+            searchQueue.Enqueue(new PointStep(new Point(point, Direction.UP), steps));
+            searchQueue.Enqueue(new PointStep(new Point(point, Direction.DOWN), steps));
+            searchQueue.Enqueue(new PointStep(new Point(point, Direction.LEFT), steps));
+            searchQueue.Enqueue(new PointStep(new Point(point, Direction.RIGHT), steps));
+        }
     }
 
     private void Dfs(Point point, int steps)
@@ -392,6 +386,18 @@ public class SimplePathFinder
 
         return _dynamicProgramming[point.Row, point.Column];
     }
+}
+
+internal class PointStep
+{
+    public PointStep(Point point, int step)
+    {
+        Point = point;
+        Step = step;
+    }
+
+    public Point Point { get; set; }
+    public int Step { get; set; }
 }
 
 public class Radar
@@ -461,4 +467,39 @@ public enum Direction
     RIGHT,
     DOWN,
     UP,
+}
+
+public struct Point
+{
+    public Point(int row, int column)
+    {
+        Row = row;
+
+        Column = column;
+    }
+
+    public Point(Point current, Direction direction)
+    {
+        Column = current.Column;
+        Row = current.Row;
+
+        switch (direction)
+        {
+            case Direction.LEFT:
+                Column--;
+                break;
+            case Direction.RIGHT:
+                Column++;
+                break;
+            case Direction.DOWN:
+                Row++;
+                break;
+            case Direction.UP:
+                Row--;
+                break;
+        }
+    }
+
+    public int Column { get; }
+    public int Row { get; }
 }
