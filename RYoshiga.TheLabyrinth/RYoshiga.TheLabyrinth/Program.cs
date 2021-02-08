@@ -101,16 +101,22 @@ public class Map
     private readonly int _maxColumn;
     private readonly Stack<Point> _positions = new Stack<Point>();
     private Dictionary<Point, bool> _searchCache;
-    private GoingBackHome _goingBackHome;
+    private SimplePathFinder _simplePathFinder;
     private Point? _startingPoint;
+    private readonly ScanResult[,] _scanDp;
+    private readonly Radar _radar;
+    private SimplePathFinder _beforeArrivingFinder;
 
     public Map(int rows, int column)
     {
         _maxColumn = column;
         _rows = new string[rows];
 
+        _scanDp = new ScanResult[Rows, Columns];
+
         _positions = new Stack<Point>();
         _searchCache = new Dictionary<Point, bool>();
+        _radar = new Radar(this);
     }
 
     public int Rows => _rows.Length;
@@ -126,25 +132,278 @@ public class Map
         if (_startingPoint == null)
             _startingPoint = current;
 
-        SetFoundControlRoom(current);
+        SetArrivedAtControlRoom(current);
 
-        if (_goingBackHome != null)
+        if (_beforeArrivingFinder != null && _simplePathFinder == null)
         {
-            return _goingBackHome.Do(current);
+            return _beforeArrivingFinder.Do(current);
+        }
+
+        if (_simplePathFinder != null)
+        {
+            Console.Error.WriteLine($"Simple path finder return");
+            return _simplePathFinder.Do(current);
+        }
+
+        var controlRoomRow = _rows.FirstOrDefault(x => x.Contains("C"));
+        if (controlRoomRow != null)
+        {
+            Console.Error.WriteLine($"Trying to find path");
+
+            var rowIndex = Array.IndexOf(_rows, controlRoomRow);
+            var charIndex = controlRoomRow.IndexOf('C');
+            var controlRoom = new Point(rowIndex, charIndex);
+            return FindPath(current, controlRoom);
+
 
         }
 
         _searchCache = new Dictionary<Point, bool>();
 
-        var dfsResult = DFS(current, 0);
+        Dfs(current, 0);
 
         _positions.Push(current);
         _visited.Add(current);
 
-        return FormatResponse(dfsResult.Direction);
+
+        return Do(current);
     }
 
-    private int CalculateDiscoveredCells(Point current)
+    private string FindPath(Point current, Point controlRoom)
+    {
+        _beforeArrivingFinder = new SimplePathFinder(this, current, 'C');
+        _beforeArrivingFinder.FillDynamicProgramming(controlRoom);
+
+        return _beforeArrivingFinder.Do(current);
+    }
+
+    public string Do(Point current)
+    {
+        var results = new[]
+        {
+            new ScoreResult(DynamicAt(new Point(current, Direction.DOWN)) , Direction.DOWN),
+            new ScoreResult(DynamicAt(new Point(current, Direction.UP)), Direction.UP),
+            new ScoreResult(DynamicAt(new Point(current, Direction.LEFT)), Direction.LEFT),
+            new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)), Direction.RIGHT),
+        };
+
+        var direction = results.OrderByDescending(x => x.Score).First().Direction;
+        return FormatResponse(direction);
+    }
+
+    private int DynamicAt(Point point)
+    {
+        if (IsOutsideRange(point))
+            return int.MinValue;
+
+        var score = _scanDp[point.Row, point.Column].LearnStepRatio;
+        return score;
+    }
+
+    public static string FormatResponse(Direction resultDirection)
+    {
+        return resultDirection.ToString().ToUpper();
+    }
+
+
+    public bool IsOutsideRange(Point point)
+    {
+        var row = point.Row;
+        if (row < 0 || row >= Rows)
+            return true;
+
+        var column = point.Column;
+        return column < 0 || column >= Columns;
+    }
+
+    private void Dfs(Point point, int steps)
+    {
+        if (IsOutsideRange(point))
+            return;
+
+        var scanResult = _scanDp[point.Row, point.Column];
+        if (scanResult != null && steps > scanResult.Steps)
+            return;
+
+        var charAt = At(point);
+        if (charAt == WALL)
+        {
+            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MinValue);
+            return;
+        }
+
+        if (charAt == 'C')
+        {
+            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MaxValue);
+            return;
+        }
+
+        if (charAt == '?')
+        {
+            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MaxValue);
+            return;
+        }
+
+        _scanDp[point.Row, point.Column] = new ScanResult(steps, _radar.CalculateDiscoveredCells(point));
+
+        steps++;
+
+        GetScore(point, steps, Direction.LEFT);
+        GetScore(point, steps, Direction.RIGHT);
+        GetScore(point, steps, Direction.UP);
+        GetScore(point, steps, Direction.DOWN);
+    }
+
+    private int At(Point current)
+    {
+        return At(current.Row, current.Column);
+    }
+
+    private void GetScore(Point current, int score, Direction direction)
+    {
+        Dfs(new Point(current, direction), score);
+    }
+
+    public char At(int row, int column)
+    {
+        if (row <= 0 || row >= _rows.Length)
+            return WALL;
+
+        if (column <= 0 || column >= _maxColumn)
+            return WALL;
+
+        return _rows[row][column];
+    }
+
+    private void SetArrivedAtControlRoom(Point currentPosition)
+    {
+        if (At(currentPosition.Row, currentPosition.Column) == 'C')
+        {
+            _simplePathFinder = new SimplePathFinder(this, currentPosition, 'T');
+            _simplePathFinder.FillDynamicProgramming(_startingPoint.Value);
+        }
+    }
+
+    public override string ToString()
+    {
+        return string.Join('\n', _rows);
+    }
+}
+
+internal class ScanResult
+{
+    public int Steps { get; }
+    public int LearnedSquares { get; }
+    public int LearnStepRatio => Steps == 0 ? int.MinValue : LearnedSquares / Steps;
+
+    public ScanResult(int steps, int learnedSquares)
+    {
+        Steps = steps;
+        LearnedSquares = learnedSquares;
+    }
+}
+
+public class SimplePathFinder
+{
+    private readonly int?[,] _dynamicProgramming;
+    private readonly Point _startingPoint;
+    private readonly Map _map;
+    private Point _targetPoint;
+    private readonly char _target;
+
+    public SimplePathFinder(Map map, Point currentPosition, char target)
+    {
+        _map = map;
+        _startingPoint = currentPosition;
+        _dynamicProgramming = new int?[map.Rows, map.Columns];
+        _target = target;
+
+        _dynamicProgramming[_startingPoint.Row, _startingPoint.Column] = int.MaxValue;
+    }
+
+    public void FillDynamicProgramming(Point targetPoint)
+    {
+        _targetPoint = targetPoint;
+        _dynamicProgramming[targetPoint.Row, targetPoint.Column] = 0;
+        Dfs(targetPoint, 0);
+    }
+
+    private void Dfs(Point point, int steps)
+    {
+        if (_map.IsOutsideRange(point))
+            return;
+
+        var existingValue = _dynamicProgramming[point.Row, point.Column];
+        if ((existingValue.HasValue && steps > existingValue) ||
+            (steps > 0 && point.Equals(_targetPoint)) ||
+            existingValue.HasValue && existingValue == int.MaxValue)
+        {
+            return;
+        }
+
+        var charAt = _map.At(point.Row, point.Column);
+        if (charAt == _target && steps > 0)
+        {
+            SetDp(point, 0);
+            return;
+        }
+
+        if (steps > 0 && (charAt == '?' || charAt == '#' || charAt == 'C'))
+        {
+            SetDp(point, int.MaxValue);
+            return;
+        }
+        else
+        {
+            SetDp(point, steps);
+
+            steps++;
+
+            Dfs(new Point(point, Direction.UP), steps);
+            Dfs(new Point(point, Direction.DOWN), steps);
+            Dfs(new Point(point, Direction.RIGHT), steps);
+            Dfs(new Point(point, Direction.LEFT), steps);
+        }
+    }
+
+    private void SetDp(Point point, int steps)
+    {
+        _dynamicProgramming[point.Row, point.Column] = steps;
+    }
+
+    public string Do(Point current)
+    {
+        var results = new[]
+        {
+            new ScoreResult(DynamicAt(new Point(current, Direction.DOWN)) ?? int.MaxValue, Direction.DOWN),
+            new ScoreResult(DynamicAt(new Point(current, Direction.UP)) ?? int.MaxValue, Direction.UP),
+            new ScoreResult(DynamicAt(new Point(current, Direction.LEFT)) ?? int.MaxValue, Direction.LEFT),
+            new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)) ?? int.MaxValue, Direction.RIGHT),
+        };
+
+        var direction = results.OrderBy(x => x.Score).First().Direction;
+        return Map.FormatResponse(direction);
+    }
+
+    private int? DynamicAt(Point point)
+    {
+        if (_map.IsOutsideRange(point))
+            return null;
+
+        return _dynamicProgramming[point.Row, point.Column];
+    }
+}
+
+public class Radar
+{
+    private Map _map;
+
+    public Radar(Map map)
+    {
+        _map = map;
+    }
+
+    public int CalculateDiscoveredCells(Point current)
     {
         var range = new[] {
             new Point(current.Row + 1, current.Column),
@@ -180,172 +439,7 @@ public class Map
             new Point(current.Row - 2, current.Column - 2),
 
         };
-        return range.Count(x => At(x.Row, x.Column) == '?');
-    }
-
-    public static string FormatResponse(Direction resultDirection)
-    {
-        return resultDirection.ToString().ToUpper();
-    }
-
-    private ScoreResult DFS(Point current, int score)
-    {
-        if (_searchCache.ContainsKey(current))
-            return new ScoreResult(-1, Direction.UP);
-
-        if (_visited.Contains(current))
-            return new ScoreResult(-1, Direction.UP);
-
-        _searchCache[current] = true;
-        var charAt = At(current.Row, current.Column);
-        if (charAt == WALL)
-            return new ScoreResult(-1, Direction.UP);
-
-        if (charAt == 'C')
-            return new ScoreResult(int.MaxValue, Direction.UP);
-
-        score += 1 + CalculateDiscoveredCells(current);
-        if (charAt == '?')
-        {
-            return new ScoreResult(score, Direction.UP);
-        }
-
-        var results = new ScoreResult[4]
-        {
-            GetScore(current, score, Direction.LEFT),
-            GetScore(current, score, Direction.RIGHT),
-            GetScore(current, score, Direction.UP),
-            GetScore(current, score, Direction.DOWN),
-        };
-
-        var scoreResult = results.OrderByDescending(x => x.Score).First();
-
-        return new ScoreResult(scoreResult.Score, scoreResult.Direction);
-    }
-
-    private ScoreResult GetScore(Point current, int score, Direction direction)
-    {
-        var dfsScore = DFS(new Point(current, direction), score).Score;
-        return new ScoreResult(dfsScore, direction);
-    }
-
-    public char At(int row, int column)
-    {
-        if (row <= 0 || row >= _rows.Length)
-            return WALL;
-
-        if (column <= 0 || column >= _maxColumn)
-            return WALL;
-
-        return _rows[row][column];
-    }
-
-    private void SetFoundControlRoom(Point currentPosition)
-    {
-        if (At(currentPosition.Row, currentPosition.Column) == 'C')
-        {
-            _goingBackHome = new GoingBackHome(this, currentPosition);
-            _goingBackHome.FillDynamicProgramming(_startingPoint.Value);
-        }
-    }
-
-    public override string ToString()
-    {
-        return string.Join('\n', _rows);
-    }
-}
-
-public class GoingBackHome
-{
-    private readonly int?[,] _dynamicProgramming;
-    private readonly Point _returnPoint;
-    private Map _map;
-    private Point _exit;
-
-    public GoingBackHome(Map map, Point currentPosition)
-    {
-        _map = map;
-        _returnPoint = currentPosition;
-        _dynamicProgramming = new int?[map.Rows, map.Columns];
-
-        _dynamicProgramming[_returnPoint.Row, _returnPoint.Column] = int.MaxValue;
-    }
-
-    public void FillDynamicProgramming(Point exit)
-    {
-        _exit = exit;
-        _dynamicProgramming[exit.Row, exit.Column] = 0;
-        Bfs(exit, 0);
-    }
-
-    private void Bfs(Point point, int steps)
-    {
-        if (IsOutsideRange(point))
-            return;
-
-        var existingValue = _dynamicProgramming[point.Row, point.Column];
-        if (existingValue > 0 && steps > existingValue || steps > 0 && point.Equals(_exit))
-        {
-            return;
-        }
-
-        var charAt = _map.At(point.Row, point.Column);
-        if (charAt == '?' || charAt == '#' || charAt == 'C')
-        {
-            _dynamicProgramming[point.Row, point.Column] = int.MaxValue;
-            return;
-        }
-        if (charAt == 'T' && steps > 0)
-        {
-            _dynamicProgramming[point.Row, point.Column] = 0;
-            return;
-        }
-        
-        SetDp(point, steps);
-
-        steps++;
-
-        Bfs(new Point(point, Direction.UP), steps);
-        Bfs(new Point(point, Direction.DOWN), steps);
-        Bfs(new Point(point, Direction.RIGHT), steps);
-        Bfs(new Point(point, Direction.LEFT), steps);
-    }
-
-    private void SetDp(Point point, int steps)
-    {
-        _dynamicProgramming[point.Row, point.Column] = steps;
-    }
-
-    private bool IsOutsideRange(Point point)
-    {
-        var row = point.Row;
-        if (row < 0 || row >= _map.Rows)
-            return true;
-
-        var column = point.Column;
-        return column < 0 || column >= _map.Columns;
-    }
-
-    public string Do(Point current)
-    {
-        var results = new[]
-        {
-            new ScoreResult(DynamicAt(new Point(current, Direction.DOWN)) ?? int.MaxValue, Direction.DOWN),
-            new ScoreResult(DynamicAt(new Point(current, Direction.UP)) ?? int.MaxValue, Direction.UP),
-            new ScoreResult(DynamicAt(new Point(current, Direction.LEFT)) ?? int.MaxValue, Direction.LEFT),
-            new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)) ?? int.MaxValue, Direction.RIGHT),
-        };
-
-        var direction = results.OrderBy(x => x.Score).First().Direction;
-        return Map.FormatResponse(direction);
-    }
-
-    private int? DynamicAt(Point point)
-    {
-        if (IsOutsideRange(point))
-            return null;
-
-        return _dynamicProgramming[point.Row, point.Column];
+        return range.Count(x => _map.At(x.Row, x.Column) == '?');
     }
 }
 
