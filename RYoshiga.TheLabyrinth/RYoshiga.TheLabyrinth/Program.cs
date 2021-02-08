@@ -90,7 +90,7 @@ class Player
         }
     }
 
-  
+
 }
 
 public class Map
@@ -98,10 +98,11 @@ public class Map
     private readonly HashSet<Point> _visited = new HashSet<Point>();
     private const char WALL = '#';
     private readonly string[] _rows;
-    private bool _controlRoomFound;
     private readonly int _maxColumn;
     private readonly Stack<Point> _positions = new Stack<Point>();
     private Dictionary<Point, bool> _searchCache;
+    private GoingBackHome _goingBackHome;
+    private Point? _startingPoint;
 
     public Map(int rows, int column)
     {
@@ -112,6 +113,9 @@ public class Map
         _searchCache = new Dictionary<Point, bool>();
     }
 
+    public int Rows => _rows.Length;
+    public int Columns => _maxColumn;
+
     public void SetRow(string row, int i)
     {
         _rows[i] = row;
@@ -119,18 +123,15 @@ public class Map
 
     public string DecideWhereToGo(Point current)
     {
+        if (_startingPoint == null)
+            _startingPoint = current;
+
         SetFoundControlRoom(current);
 
-        if (_controlRoomFound)
+        if (_goingBackHome != null)
         {
-            var tryPop = _positions.TryPop(out Point result);
-            if (tryPop)
-            {
-                var direction = current.FindDirection(result);
-                return FormatResponse(direction);
-            }
+            return _goingBackHome.Do(current);
 
-            return "DONT KNOW";
         }
 
         _searchCache = new Dictionary<Point, bool>();
@@ -158,25 +159,20 @@ public class Map
             new Point(current.Row, current.Column - 1),
             new Point(current.Row, current.Column - 2),
 
-
-
             new Point(current.Row + 1, current.Column + 1),
             new Point(current.Row + 1, current.Column + 2),
             new Point(current.Row + 2, current.Column + 1),
             new Point(current.Row + 2, current.Column + 2),
-
 
             new Point(current.Row + 1, current.Column - 1),
             new Point(current.Row + 1, current.Column - 2),
             new Point(current.Row + 2, current.Column - 1),
             new Point(current.Row + 2, current.Column - 2),
 
-
             new Point(current.Row - 1, current.Column + 1),
             new Point(current.Row - 1, current.Column + 2),
             new Point(current.Row - 2, current.Column + 1),
             new Point(current.Row - 2, current.Column + 2),
-
 
             new Point(current.Row - 1, current.Column - 1),
             new Point(current.Row - 1, current.Column - 2),
@@ -187,7 +183,7 @@ public class Map
         return range.Count(x => At(x.Row, x.Column) == '?');
     }
 
-    private static string FormatResponse(Direction resultDirection)
+    public static string FormatResponse(Direction resultDirection)
     {
         return resultDirection.ToString().ToUpper();
     }
@@ -233,7 +229,7 @@ public class Map
         return new ScoreResult(dfsScore, direction);
     }
 
-    private char At(int row, int column)
+    public char At(int row, int column)
     {
         if (row <= 0 || row >= _rows.Length)
             return WALL;
@@ -248,13 +244,108 @@ public class Map
     {
         if (At(currentPosition.Row, currentPosition.Column) == 'C')
         {
-            _controlRoomFound = true;
+            _goingBackHome = new GoingBackHome(this, currentPosition);
+            _goingBackHome.FillDynamicProgramming(_startingPoint.Value);
         }
     }
 
     public override string ToString()
     {
         return string.Join('\n', _rows);
+    }
+}
+
+public class GoingBackHome
+{
+    private readonly int?[,] _dynamicProgramming;
+    private readonly Point _returnPoint;
+    private Map _map;
+    private Point _exit;
+
+    public GoingBackHome(Map map, Point currentPosition)
+    {
+        _map = map;
+        _returnPoint = currentPosition;
+        _dynamicProgramming = new int?[map.Rows, map.Columns];
+
+        _dynamicProgramming[_returnPoint.Row, _returnPoint.Column] = int.MaxValue;
+    }
+
+    public void FillDynamicProgramming(Point exit)
+    {
+        _exit = exit;
+        _dynamicProgramming[exit.Row, exit.Column] = 0;
+        Bfs(exit, 0);
+    }
+
+    private void Bfs(Point point, int steps)
+    {
+        if (IsOutsideRange(point))
+            return;
+
+        var existingValue = _dynamicProgramming[point.Row, point.Column];
+        if (existingValue > 0 && steps > existingValue || steps > 0 && point.Equals(_exit))
+        {
+            return;
+        }
+
+        var charAt = _map.At(point.Row, point.Column);
+        if (charAt == '?' || charAt == '#' || charAt == 'C')
+        {
+            _dynamicProgramming[point.Row, point.Column] = int.MaxValue;
+            return;
+        }
+        if (charAt == 'T' && steps > 0)
+        {
+            _dynamicProgramming[point.Row, point.Column] = 0;
+            return;
+        }
+        
+        SetDp(point, steps);
+
+        steps++;
+
+        Bfs(new Point(point, Direction.UP), steps);
+        Bfs(new Point(point, Direction.DOWN), steps);
+        Bfs(new Point(point, Direction.RIGHT), steps);
+        Bfs(new Point(point, Direction.LEFT), steps);
+    }
+
+    private void SetDp(Point point, int steps)
+    {
+        _dynamicProgramming[point.Row, point.Column] = steps;
+    }
+
+    private bool IsOutsideRange(Point point)
+    {
+        var row = point.Row;
+        if (row < 0 || row >= _map.Rows)
+            return true;
+
+        var column = point.Column;
+        return column < 0 || column >= _map.Columns;
+    }
+
+    public string Do(Point current)
+    {
+        var results = new[]
+        {
+            new ScoreResult(DynamicAt(new Point(current, Direction.DOWN)) ?? int.MaxValue, Direction.DOWN),
+            new ScoreResult(DynamicAt(new Point(current, Direction.UP)) ?? int.MaxValue, Direction.UP),
+            new ScoreResult(DynamicAt(new Point(current, Direction.LEFT)) ?? int.MaxValue, Direction.LEFT),
+            new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)) ?? int.MaxValue, Direction.RIGHT),
+        };
+
+        var direction = results.OrderBy(x => x.Score).First().Direction;
+        return Map.FormatResponse(direction);
+    }
+
+    private int? DynamicAt(Point point)
+    {
+        if (IsOutsideRange(point))
+            return null;
+
+        return _dynamicProgramming[point.Row, point.Column];
     }
 }
 
