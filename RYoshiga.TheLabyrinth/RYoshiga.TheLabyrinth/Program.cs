@@ -54,20 +54,24 @@ public class Map
     private Dictionary<Point, bool> _searchCache;
     private SimplePathFinder _simplePathFinder;
     private Point? _startingPoint;
-    private readonly ScanResult[,] _scanDp;
+    private ScanResult[,] _scanDp;
     private readonly Radar _radar;
     private SimplePathFinder _beforeArrivingFinder;
+    private int _lowesPossibleScore;
+    private ScanResult _bestPlaceToGo;
+    private HashSet<Point> _queried;
 
     public Map(int rows, int column)
     {
         _maxColumn = column;
         _rows = new string[rows];
 
-        _scanDp = new ScanResult[Rows, Columns];
 
         _positions = new Stack<Point>();
-        _searchCache = new Dictionary<Point, bool>();
         _radar = new Radar(this);
+
+
+        _lowesPossibleScore = -9999;
     }
 
     public int Rows => _rows.Length;
@@ -105,19 +109,17 @@ public class Map
             var charIndex = controlRoomRow.IndexOf('C');
             var controlRoom = new Point(rowIndex, charIndex);
             return FindPath(current, controlRoom);
-
-
         }
 
-        _searchCache = new Dictionary<Point, bool>();
+        _scanDp = new ScanResult[Rows, Columns];
+        _bestPlaceToGo = null;
 
-        Dfs(current, 0);
+        Bfs(current);
 
         _positions.Push(current);
         _visited.Add(current);
 
-
-        return Do(current);
+        return ChooseBasedOnTheDp(current);
     }
 
     private string FindPath(Point current, Point controlRoom)
@@ -128,27 +130,39 @@ public class Map
         return _beforeArrivingFinder.Do(current);
     }
 
-    public string Do(Point current)
+    public string ChooseBasedOnTheDp(Point current)
     {
-        var results = new[]
+        Console.Error.WriteLine($"This was the best place to go: {_bestPlaceToGo.Point.Row}, {_bestPlaceToGo.Point.Column}");
+        var stepPoint = new StepPoint(_bestPlaceToGo.Steps, _bestPlaceToGo.Point);
+        while (stepPoint.Steps > 1)
         {
-            new ScoreResult(DynamicAt(new Point(current, Direction.DOWN)) , Direction.DOWN),
-            new ScoreResult(DynamicAt(new Point(current, Direction.UP)), Direction.UP),
-            new ScoreResult(DynamicAt(new Point(current, Direction.LEFT)), Direction.LEFT),
-            new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)), Direction.RIGHT),
-        };
+            var results = new[]
+            {
+                DynamicAt(new Point(stepPoint.Point, Direction.DOWN)),
+                DynamicAt(new Point(stepPoint.Point, Direction.UP)),
+                DynamicAt(new Point(stepPoint.Point, Direction.LEFT)),
+                DynamicAt(new Point(stepPoint.Point, Direction.RIGHT)),
+            };
 
-        var direction = results.OrderByDescending(x => x.Score).First().Direction;
-        return FormatResponse(direction);
+            stepPoint = results.OrderBy(p => p.Steps).ThenByDescending(x => x.Point.Row).First();
+        }
+
+        Console.Error.WriteLine($"Trying to go to: {stepPoint.Point.Row}, {stepPoint.Point.Column}");
+        return FormatResponse(current.FindDirection(stepPoint.Point));
     }
 
-    private int DynamicAt(Point point)
+    private StepPoint DynamicAt(Point point)
     {
         if (IsOutsideRange(point))
-            return int.MinValue;
+        {
+            return new StepPoint(int.MaxValue, point);
+        }
 
-        var score = _scanDp[point.Row, point.Column].LearnStepRatio;
-        return score;
+        var scanResult = _scanDp[point.Row, point.Column];
+        if (scanResult == null)
+            return new StepPoint(int.MaxValue, point);
+
+        return new StepPoint(scanResult.Steps, point);
     }
 
     public static string FormatResponse(Direction resultDirection)
@@ -167,52 +181,70 @@ public class Map
         return column < 0 || column >= Columns;
     }
 
-    private void Dfs(Point point, int steps)
+    private void Bfs(Point startingPoint)
     {
-        if (IsOutsideRange(point))
-            return;
+        var searchQueue = new Queue<PointStep>();
+        _queried = new HashSet<Point>();
+        
+        searchQueue.Enqueue(new PointStep(startingPoint, 0));
 
-        var scanResult = _scanDp[point.Row, point.Column];
-        if (scanResult != null && steps > scanResult.Steps)
-            return;
-
-        var charAt = At(point);
-        if (charAt == WALL)
+        while (searchQueue.TryDequeue(out var pointStep))
         {
-            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MinValue);
+            var point = pointStep.Point;
+            var steps = pointStep.Step;
+
+            if (IsOutsideRange(point))
+                continue;
+            
+            if (steps >= 20)
+                break;
+
+            var charAt = At(point);
+            if (charAt == WALL)
+            {
+                _scanDp[point.Row, point.Column] = new ScanResult(int.MaxValue, -1000);
+                continue;
+            }
+
+            if (steps > 0 && (charAt == '?'))
+            {
+                _scanDp[point.Row, point.Column] = new ScanResult(steps, _lowesPossibleScore);
+                continue;
+            }
+
+            var discoveredCells = _radar.CalculateDiscoveredCells(point);
+            var scanResult = new ScanResult(steps, discoveredCells, point);
+            if (_bestPlaceToGo == null || scanResult.LearnStepScore > _bestPlaceToGo.LearnStepScore)
+            {
+                _bestPlaceToGo = scanResult;
+            }
+
+            _scanDp[point.Row, point.Column] = scanResult;
+
+            steps++;
+
+            SafeEnqueue(searchQueue, steps, new Point(point, Direction.UP));
+            SafeEnqueue(searchQueue, steps, new Point(point, Direction.DOWN));
+            SafeEnqueue(searchQueue, steps, new Point(point, Direction.LEFT));
+            SafeEnqueue(searchQueue, steps, new Point(point, Direction.RIGHT));
+        }
+    }
+
+    private void SafeEnqueue(Queue<PointStep> searchQueue, int steps, Point newPoint)
+    {
+        if (_queried.Contains(newPoint))
+        {
             return;
         }
 
-        if (charAt == 'C')
-        {
-            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MaxValue);
-            return;
-        }
-
-        if (charAt == '?')
-        {
-            _scanDp[point.Row, point.Column] = new ScanResult(steps, int.MaxValue);
-            return;
-        }
-
-        _scanDp[point.Row, point.Column] = new ScanResult(steps, _radar.CalculateDiscoveredCells(point));
-
-        steps++;
-
-        GetScore(point, steps, Direction.LEFT);
-        GetScore(point, steps, Direction.RIGHT);
-        GetScore(point, steps, Direction.UP);
-        GetScore(point, steps, Direction.DOWN);
+        _queried.Add(newPoint);
+        
+        searchQueue.Enqueue(new PointStep(newPoint, steps));
     }
 
     private int At(Point current)
     {
         return At(current.Row, current.Column);
-    }
-
-    private void GetScore(Point current, int score, Direction direction)
-    {
-        Dfs(new Point(current, direction), score);
     }
 
     public char At(int row, int column)
@@ -241,16 +273,36 @@ public class Map
     }
 }
 
+public class StepPoint
+{
+    public int Steps { get; }
+    public Point Point { get; }
+
+    public StepPoint(int steps, Point point)
+    {
+        Steps = steps;
+        Point = point;
+    }
+}
+
 internal class ScanResult
 {
     public int Steps { get; }
     public int LearnedSquares { get; }
-    public int LearnStepRatio => Steps == 0 ? int.MinValue : LearnedSquares / Steps;
+    public Point Point { get; }
+    public decimal LearnStepScore => Steps == 0 ? decimal.MinValue : LearnedSquares / Steps;
 
     public ScanResult(int steps, int learnedSquares)
     {
         Steps = steps;
         LearnedSquares = learnedSquares;
+    }
+
+    public ScanResult(in int steps, in int discoveredCells, Point point)
+    {
+        Steps = steps;
+        LearnedSquares = discoveredCells;
+        Point = point;
     }
 }
 
@@ -322,44 +374,6 @@ public class SimplePathFinder
         }
     }
 
-    private void Dfs(Point point, int steps)
-    {
-        if (_map.IsOutsideRange(point))
-            return;
-
-        var existingValue = _dynamicProgramming[point.Row, point.Column];
-        if ((existingValue.HasValue && steps > existingValue) ||
-            (steps > 0 && point.Equals(_targetPoint)) ||
-            existingValue.HasValue && existingValue == int.MaxValue)
-        {
-            return;
-        }
-
-        var charAt = _map.At(point.Row, point.Column);
-        if (charAt == _target && steps > 0)
-        {
-            SetDp(point, 0);
-            return;
-        }
-
-        if (steps > 0 && (charAt == '?' || charAt == '#' || charAt == 'C'))
-        {
-            SetDp(point, int.MaxValue);
-            return;
-        }
-        else
-        {
-            SetDp(point, steps);
-
-            steps++;
-
-            Dfs(new Point(point, Direction.UP), steps);
-            Dfs(new Point(point, Direction.DOWN), steps);
-            Dfs(new Point(point, Direction.RIGHT), steps);
-            Dfs(new Point(point, Direction.LEFT), steps);
-        }
-    }
-
     private void SetDp(Point point, int steps)
     {
         _dynamicProgramming[point.Row, point.Column] = steps;
@@ -402,6 +416,7 @@ internal class PointStep
 
 public class Radar
 {
+    private const char QuestionMark = '?';
     private Map _map;
 
     public Radar(Map map)
@@ -445,8 +460,10 @@ public class Radar
             new Point(current.Row - 2, current.Column - 2),
 
         };
-        return range.Count(x => _map.At(x.Row, x.Column) == '?');
+        return range.Count(x => _map.At(x.Row, x.Column) == QuestionMark);
     }
+
+
 }
 
 internal struct ScoreResult
@@ -502,4 +519,18 @@ public struct Point
 
     public int Column { get; }
     public int Row { get; }
+
+    public Direction FindDirection(Point previous)
+    {
+        if (Row > previous.Row)
+            return Direction.UP;
+
+        if (Row < previous.Row)
+            return Direction.DOWN;
+
+        if (Column > previous.Column)
+            return Direction.LEFT;
+
+        return Direction.RIGHT;
+    }
 }
