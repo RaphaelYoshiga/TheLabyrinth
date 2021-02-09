@@ -298,7 +298,7 @@ internal class ScanResult
     public int Steps { get; }
     public int LearnedSquares { get; }
     public Point Point { get; }
-    public decimal LearnStepScore => Steps == 0 ? decimal.MinValue : LearnedSquares / Steps;
+    public decimal LearnStepScore => Steps == 0 ? decimal.MinValue : LearnedSquares / (Steps * 0.26m);
 
     public ScanResult(int steps, int learnedSquares)
     {
@@ -321,6 +321,7 @@ public class SimplePathFinder
     private readonly Map _map;
     private Point _targetPoint;
     private readonly char _target;
+    private HashSet<Point> _queried;
 
     public SimplePathFinder(Map map, Point currentPosition, char target)
     {
@@ -343,6 +344,8 @@ public class SimplePathFinder
     {
         var searchQueue = new Queue<PointStep>();
         searchQueue.Enqueue(new PointStep(startingPoint, steps));
+        _queried = new HashSet<Point>();
+
 
         while (searchQueue.TryDequeue(out var pointStep))
         {
@@ -375,11 +378,20 @@ public class SimplePathFinder
 
             SetDp(point, steps);
 
-            searchQueue.Enqueue(new PointStep(new Point(point, Direction.UP), steps));
-            searchQueue.Enqueue(new PointStep(new Point(point, Direction.DOWN), steps));
-            searchQueue.Enqueue(new PointStep(new Point(point, Direction.LEFT), steps));
-            searchQueue.Enqueue(new PointStep(new Point(point, Direction.RIGHT), steps));
+            SafeEnqueue(steps, searchQueue, new Point(point, Direction.UP));
+            SafeEnqueue(steps, searchQueue, new Point(point, Direction.DOWN));
+            SafeEnqueue(steps, searchQueue, new Point(point, Direction.LEFT));
+            SafeEnqueue(steps, searchQueue, new Point(point, Direction.RIGHT));
         }
+    }
+
+    private void SafeEnqueue(int steps, Queue<PointStep> searchQueue, Point newPoint)
+    {
+        if (_queried.Contains(newPoint))
+            return;
+        
+        _queried.Add(newPoint);
+        searchQueue.Enqueue(new PointStep(newPoint, steps));
     }
 
     private void SetDp(Point point, int steps)
