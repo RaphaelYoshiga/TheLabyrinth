@@ -204,9 +204,6 @@ public class Map
             if (IsOutsideRange(point))
                 continue;
 
-            if (steps >= 20)
-                break;
-
             var charAt = At(point);
             if (charAt == WALL)
             {
@@ -298,7 +295,7 @@ internal class ScanResult
     public int Steps { get; }
     public int LearnedSquares { get; }
     public Point Point { get; }
-    public decimal LearnStepScore => Steps == 0 ? decimal.MinValue : LearnedSquares / (Steps * 0.26m);
+    public decimal LearnStepScore => Steps == 0 ? decimal.MinValue : LearnedSquares / (Steps * 0.01m);
 
     public ScanResult(int steps, int learnedSquares)
     {
