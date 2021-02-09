@@ -60,6 +60,7 @@ public class Map
     private int _lowesPossibleScore;
     private ScanResult _bestPlaceToGo;
     private HashSet<Point> _queried;
+    private Point _controlRoom;
 
     public Map(int rows, int column)
     {
@@ -89,26 +90,33 @@ public class Map
 
         SetArrivedAtControlRoom(current);
 
-        if (_beforeArrivingFinder != null && _simplePathFinder == null)
-        {
-            return _beforeArrivingFinder.Do(current);
-        }
-
         if (_simplePathFinder != null)
         {
             Console.Error.WriteLine($"Simple path finder return");
             return _simplePathFinder.Do(current);
         }
 
-        var controlRoomRow = _rows.FirstOrDefault(x => x.Contains("C"));
-        if (controlRoomRow != null)
+        try
         {
-            Console.Error.WriteLine($"Trying to find path");
+            if (_beforeArrivingFinder != null)
+            {
+                return FindPath(current, _controlRoom);
+            }
 
-            var rowIndex = Array.IndexOf(_rows, controlRoomRow);
-            var charIndex = controlRoomRow.IndexOf('C');
-            var controlRoom = new Point(rowIndex, charIndex);
-            return FindPath(current, controlRoom);
+            var controlRoomRow = _rows.FirstOrDefault(x => x.Contains("C"));
+            if (controlRoomRow != null)
+            {
+                Console.Error.WriteLine($"Trying to find path");
+
+                var rowIndex = Array.IndexOf(_rows, controlRoomRow);
+                var charIndex = controlRoomRow.IndexOf('C');
+                _controlRoom = new Point(rowIndex, charIndex);
+                return FindPath(current, _controlRoom);
+            }
+        }
+        catch (NoExistingPath e)
+        {
+            Console.Error.WriteLine("No path yet");
         }
 
         _scanDp = new ScanResult[Rows, Columns];
@@ -185,7 +193,7 @@ public class Map
     {
         var searchQueue = new Queue<PointStep>();
         _queried = new HashSet<Point>();
-        
+
         searchQueue.Enqueue(new PointStep(startingPoint, 0));
 
         while (searchQueue.TryDequeue(out var pointStep))
@@ -195,7 +203,7 @@ public class Map
 
             if (IsOutsideRange(point))
                 continue;
-            
+
             if (steps >= 20)
                 break;
 
@@ -238,7 +246,7 @@ public class Map
         }
 
         _queried.Add(newPoint);
-        
+
         searchQueue.Enqueue(new PointStep(newPoint, steps));
     }
 
@@ -249,10 +257,10 @@ public class Map
 
     public char At(int row, int column)
     {
-        if (row <= 0 || row >= _rows.Length)
+        if (row < 0 || row >= _rows.Length)
             return WALL;
 
-        if (column <= 0 || column >= _maxColumn)
+        if (column < 0 || column >= _maxColumn)
             return WALL;
 
         return _rows[row][column];
@@ -389,17 +397,23 @@ public class SimplePathFinder
             new ScoreResult(DynamicAt(new Point(current, Direction.RIGHT)) ?? int.MaxValue, Direction.RIGHT),
         };
 
-        var direction = results.OrderBy(x => x.Score).First().Direction;
+        var lowestSteps = results.OrderBy(x => x.Score).First();
+
+        if (lowestSteps.Score > 1000000)
+            throw new NoExistingPath();
+
+        var direction = lowestSteps.Direction;
         return Map.FormatResponse(direction);
     }
 
     private int? DynamicAt(Point point)
     {
-        if (_map.IsOutsideRange(point))
-            return null;
-
-        return _dynamicProgramming[point.Row, point.Column];
+        return _map.IsOutsideRange(point) ? null : _dynamicProgramming[point.Row, point.Column];
     }
+}
+
+public class NoExistingPath : Exception
+{
 }
 
 internal class PointStep
